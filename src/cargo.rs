@@ -205,7 +205,7 @@ lazy_static! {
 pub fn get_tests(config: &Config) -> Result<CargoOutput, RunError> {
     let mut result = CargoOutput::default();
     if config.force_clean() {
-        let cleanup_dir = if config.release {
+        let cleanup_dir = if config.cargo.release {
             config.target_dir().join("release")
         } else {
             config.target_dir().join("debug")
@@ -231,7 +231,7 @@ pub fn get_tests(config: &Config) -> Result<CargoOutput, RunError> {
     if config.has_named_tests() {
         run_cargo(&metadata, manifest, config, None, &mut result)?;
     } else if config.run_types.is_empty() {
-        let ty = if config.command == Mode::Test {
+        let ty = if config.cargo.command == Mode::Test {
             Some(RunType::Tests)
         } else {
             None
@@ -270,7 +270,7 @@ fn run_cargo(
             match msg {
                 Ok(Message::CompilerArtifact(art)) => {
                     if let Some(path) = art.executable.as_ref() {
-                        if !art.profile.test && config.command == Mode::Test {
+                        if !art.profile.test && config.cargo.command == Mode::Test {
                             result.binaries.push(PathBuf::from(path));
                             continue;
                         }
@@ -525,7 +525,7 @@ fn create_command(manifest_path: &str, config: &Config, ty: Option<RunType>) -> 
         if let Ok(toolchain) = env::var("RUSTUP_TOOLCHAIN") {
             test_cmd.arg(format!("+{toolchain}"));
         }
-        if config.command == Mode::Test {
+        if config.cargo.command == Mode::Test {
             test_cmd.args(["test", "--no-run"]);
         } else {
             test_cmd.arg("build");
@@ -566,73 +566,75 @@ fn create_command(manifest_path: &str, config: &Config, ty: Option<RunType>) -> 
 }
 
 fn init_args(test_cmd: &mut Command, config: &Config) {
+    let cargo_config = &config.cargo;
+    if cargo_config.locked {
+        test_cmd.arg("--locked");
+    }
+    if cargo_config.frozen {
+        test_cmd.arg("--frozen");
+    }
+    if let Some(profile) = cargo_config.profile.as_ref() {
+        test_cmd.arg("--profile");
+        test_cmd.arg(profile);
+    }
+    if let Some(jobs) = cargo_config.jobs {
+        test_cmd.arg("--jobs");
+        test_cmd.arg(jobs.to_string());
+    }
+    if let Some(features) = cargo_config.features.as_ref() {
+        test_cmd.arg("--features");
+        test_cmd.arg(features);
+    }
+    if cargo_config.all_features {
+        test_cmd.arg("--all-features");
+    }
+    if cargo_config.no_default_features {
+        test_cmd.arg("--no-default-features");
+    }
+    if cargo_config.all {
+        test_cmd.arg("--workspace");
+    }
+    if cargo_config.release {
+        test_cmd.arg("--release");
+    }
+    cargo_config.packages.iter().for_each(|package| {
+        test_cmd.arg("--package");
+        test_cmd.arg(package);
+    });
+    cargo_config.exclude.iter().for_each(|package| {
+        test_cmd.arg("--exclude");
+        test_cmd.arg(package);
+    });
+    if let Some(target) = cargo_config.target.as_ref() {
+        test_cmd.args(["--target", target]);
+    }
+    if cargo_config.offline {
+        test_cmd.arg("--offline");
+    }
+    for feat in &cargo_config.unstable_features {
+        test_cmd.arg(format!("-Z{feat}"));
+    }
+    if cargo_config.command == Mode::Test && !cargo_config.varargs.is_empty() {
+        let mut args = vec!["--".to_string()];
+        args.extend_from_slice(&cargo_config.varargs);
+        test_cmd.args(args);
+    }
+
+    if config.no_fail_fast {
+        test_cmd.arg("--no-fail-fast");
+    }
     if config.debug {
         test_cmd.arg("-vvv");
     } else if config.verbose {
         test_cmd.arg("-v");
     }
-    if config.locked {
-        test_cmd.arg("--locked");
-    }
-    if config.frozen {
-        test_cmd.arg("--frozen");
-    }
-    if config.no_fail_fast {
-        test_cmd.arg("--no-fail-fast");
-    }
-    if let Some(profile) = config.profile.as_ref() {
-        test_cmd.arg("--profile");
-        test_cmd.arg(profile);
-    }
-    if let Some(jobs) = config.jobs {
-        test_cmd.arg("--jobs");
-        test_cmd.arg(jobs.to_string());
-    }
-    if let Some(features) = config.features.as_ref() {
-        test_cmd.arg("--features");
-        test_cmd.arg(features);
-    }
-    if config.all_features {
-        test_cmd.arg("--all-features");
-    }
-    if config.no_default_features {
-        test_cmd.arg("--no-default-features");
-    }
-    if config.all {
-        test_cmd.arg("--workspace");
-    }
-    if config.release {
-        test_cmd.arg("--release");
-    }
-    config.packages.iter().for_each(|package| {
-        test_cmd.arg("--package");
-        test_cmd.arg(package);
-    });
-    config.exclude.iter().for_each(|package| {
-        test_cmd.arg("--exclude");
-        test_cmd.arg(package);
-    });
     test_cmd.arg("--color");
     test_cmd.arg(config.color.to_string().to_ascii_lowercase());
-    if let Some(target) = config.target.as_ref() {
-        test_cmd.args(["--target", target]);
-    }
     let args = vec![
         "--target-dir".to_string(),
         format!("{}", config.target_dir().display()),
     ];
     test_cmd.args(args);
-    if config.offline {
-        test_cmd.arg("--offline");
-    }
-    for feat in &config.unstable_features {
-        test_cmd.arg(format!("-Z{feat}"));
-    }
-    if config.command == Mode::Test && !config.varargs.is_empty() {
-        let mut args = vec!["--".to_string()];
-        args.extend_from_slice(&config.varargs);
-        test_cmd.args(args);
-    }
 }
 
 /// Old doc tests that no longer exist or where the line have changed can persist so delete them to
@@ -762,7 +764,7 @@ pub fn rust_flags(config: &Config) -> String {
     if !config.avoid_cfg_tarpaulin {
         value.push_str("--cfg=tarpaulin ");
     }
-    if config.release {
+    if config.cargo.release {
         value.push_str("-Cdebug-assertions=off ");
     }
     handle_llvm_flags(&mut value, config);

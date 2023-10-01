@@ -229,7 +229,7 @@ fn execute_test(
     if ignored {
         argv.push("--ignored".to_string());
     }
-    argv.extend_from_slice(&config.varargs);
+    argv.extend_from_slice(&config.cargo.varargs);
     if config.color != Color::Auto {
         argv.push("--color".to_string());
         argv.push(config.color.to_string().to_ascii_lowercase());
@@ -244,7 +244,11 @@ fn execute_test(
     if no_test_env
         && test.is_test_type()
         && !config.implicit_test_threads
-        && !config.varargs.iter().any(|x| x.contains("--test-threads"))
+        && !config
+            .cargo
+            .varargs
+            .iter()
+            .any(|x| x.contains("--test-threads"))
     {
         if let Some(threads) = num_threads {
             argv.push("--test-threads".to_string());
